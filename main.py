@@ -1,95 +1,107 @@
-from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.image import Image
-from kivy.uix.button import Button
-from kivy.clock import Clock
-from kivy.graphics.texture import Texture
 import cv2
 import numpy as np
 import json
 import requests
-import tensorflow as tf
 from tensorflow.keras.models import load_model
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.camera import Camera
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.clock import Clock
+from kivy.graphics import Color, Rectangle
 
-# Load model
+from scripts.nutrition import get_nutrition
+from scripts.recipes import get_recipes
+
+# Load ML model and class indices
 model = load_model('fruit_recognition_model.h5')
-
-# Manually define class mappings
 fruit_classes = {
-    0: "apple",
-    1: "garlic",
-    2: "ginger",
-    3: "onion",
-    4: "potato"
+    0: "Apple",
+    1: "Garlic",
+    2: "Ginger",
+    3: "Onion",
+    4: "Potato"
 }
 
-# Function to get nutrition info
-def get_nutrition(fruit_name):
-    api_key = "AruAFSTx9fcRdxMaHf5I9p696DotbfO8W1v2HWYp"
-    url = "https://api.nal.usda.gov/fdc/v1/foods/search"
-    params = {"query": fruit_name, "api_key": api_key, "pageSize": 1}
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        foods = data.get("foods", [])
-        if foods:
-            nutrients = foods[0].get("foodNutrients", [])
-            return {nutrient["nutrientName"]: nutrient["value"] for nutrient in nutrients[:3]}
-    return {"error": "No data found."}
-
-# Function to get recipes
-def get_recipes(fruit_name):
-    api_key = "6c78811f86d741188e3c416a21c496c9"
-    url = "https://api.spoonacular.com/recipes/complexSearch"
-    params = {"query": fruit_name, "apiKey": api_key, "number": 3}
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return [recipe["title"] for recipe in response.json().get("results", [])]
-    return ["No recipes found."]
-
-class FruitApp(App):
+class App(App):
     def build(self):
-        self.capture = False
-        self.layout = BoxLayout(orientation='vertical')
-        self.image = Image()
-        self.button = Button(text='Start', size_hint=(1, 0.2))
-        self.button.bind(on_press=self.toggle_camera)
-        self.layout.add_widget(self.image)
-        self.layout.add_widget(self.button)
-        self.cap = cv2.VideoCapture(0)
-        Clock.schedule_interval(self.update, 1.0 / 30.0)
-        return self.layout
+        layout = BoxLayout(orientation="vertical")  # Main layout
+        
+        # Set background color to #303A50 (RGB 48, 58, 80)
+        with layout.canvas.before:
+            Color(0.188, 0.227, 0.314, 1)  # Converted RGBA
+            self.rect = Rectangle(size=layout.size, pos=layout.pos)
+        layout.bind(size=self.update_rect, pos=self.update_rect)
+
+        self.camera = Camera(resolution=(640, 480), play=False)
+        self.btn = Button(text="Start", size_hint=(1, 0.1))
+        self.btn.bind(on_press=self.toggle_camera)
+
+        self.label = Label(text="Press Start to Detect", size_hint=(1, 0.1))
+
+        # Create a horizontal layout for Nutrition & Recipes
+        info_layout = BoxLayout(orientation="horizontal", size_hint=(1, 0.3))  
+
+        self.nutrition_label = Label(text="Nutrition Info: ", size_hint=(0.5, 1))  # 50% width
+        self.recipes_label = Label(text="Recipes: ", size_hint=(0.5, 1))  # 50% width
+
+        info_layout.add_widget(self.nutrition_label)
+        info_layout.add_widget(self.recipes_label)
+
+        layout.add_widget(self.camera)
+        layout.add_widget(self.label)
+        layout.add_widget(info_layout)  # Added horizontal layout here
+        layout.add_widget(self.btn)
+
+        return layout
 
     def toggle_camera(self, instance):
-        self.capture = not self.capture
-        self.button.text = "Stop" if self.capture else "Start"
+        if not self.camera.play:
+            self.camera.play = True
+            self.btn.text = 'Stop'
+            Clock.schedule_interval(self.detect_fruit, 1)  # Run detection every 1 sec
+        else:
+            self.camera.play = False
+            self.btn.text = 'Start'
+            Clock.unschedule(self.detect_fruit)
 
-    def update(self, dt):
-        if self.capture:
-            ret, frame = self.cap.read()
-            if ret:
-                resized = cv2.resize(frame, (100, 100))
-                normalized = resized / 255.0
-                input_tensor = np.expand_dims(normalized, axis=0)
-                predictions = model.predict(input_tensor, verbose=0)
-                class_idx = np.argmax(predictions)
-                confidence = np.max(predictions)
-                fruit_name = fruit_classes.get(class_idx, "Unknown")
-                label = f"{fruit_name} ({confidence:.2f})"
-                nutrition = get_nutrition(fruit_name)
-                recipes = get_recipes(fruit_name)
-                nutrition_text = ", ".join(f"{k}: {v}" for k, v in nutrition.items())
-                recipes_text = ", ".join(recipes)
-                cv2.putText(frame, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0))
-                cv2.putText(frame, f"Nutrition: {nutrition_text}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255))
-                cv2.putText(frame, f"Recipes: {recipes_text}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0))
-                buf = cv2.flip(frame, 0).tobytes()
-                texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt='bgr')
-                texture.blit_buffer(buf, colorfmt='bgr', bufferfmt='ubyte')
-                self.image.texture = texture
+    def detect_fruit(self, dt):
+        frame = self.camera.texture  # Get frame from Kivy Camera
+        
+        if frame:
+            frame = frame.pixels  # Convert to image array
+            frame = np.frombuffer(frame, dtype=np.uint8).reshape((480, 640, 4))  # Convert to RGB
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
 
-    def on_stop(self):
-        self.cap.release()
+            # Process image for model
+            resized = cv2.resize(frame, (100, 100))
+            normalized = resized / 255.0
+            input_tensor = np.expand_dims(normalized, axis=0)
 
-if _name_ == '_main_':
-    FruitApp().run()
+            predictions = model.predict(input_tensor, verbose=0)
+            class_idx = np.argmax(predictions)
+            confidence = np.max(predictions)
+            fruit_name = fruit_classes[class_idx]
+            label = f"{fruit_name} ({confidence:.2f})"
+            
+            # Update labels
+            self.label.text = label
+            
+            # Get and display nutrition info (now 5 nutrients)
+            nutrition = get_nutrition(fruit_name)
+            nutrition_items = list(nutrition.items())[:5]  # Now showing 5 items
+            nutrition_text = "\n".join([f"{key}: {value}" for key, value in nutrition_items]) if nutrition_items else "Not Found"
+            self.nutrition_label.text = f"Nutrition Info:\n{nutrition_text}"
+            
+            # Get and display recipes (only 5 recipes)
+            recipes = get_recipes(fruit_name)
+            recipes_text = "\n".join(recipes[:5])  # Get first 5 recipes
+            self.recipes_label.text = f"Recipes:\n{recipes_text}"
+
+    def update_rect(self, instance, value):
+        self.rect.size = instance.size
+        self.rect.pos = instance.pos
+
+if __name__ == "__main__":
+    App().run()
