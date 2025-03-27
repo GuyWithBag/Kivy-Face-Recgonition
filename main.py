@@ -113,9 +113,11 @@ class FruitDetectionApp(App):
             color=(0.2, 0.2, 0.2, 1),
             halign='left',
             valign='top',
-            text_size=(Window.width - 40, None)
+            text_size=(Window.width - 60, None),  # Dynamic width with padding
+            padding=(10, 10)  # Padding to avoid edge cutoff
         )
-        self.nutrition_label.bind(texture_size=lambda instance, value: setattr(instance, 'height', value[1]))
+        # Dynamically set height based on content
+        self.nutrition_label.bind(texture_size=lambda instance, value: setattr(instance, 'height', value[1] + 20))
         nutrition_scroll.add_widget(self.nutrition_label)
         nutrition_container.add_widget(nutrition_header)
         nutrition_container.add_widget(nutrition_scroll)
@@ -137,9 +139,11 @@ class FruitDetectionApp(App):
             color=(0.2, 0.2, 0.2, 1),
             halign='left',
             valign='top',
-            text_size=(Window.width - 40, None)
+            text_size=(Window.width - 60, None),  # Dynamic width with padding
+            padding=(10, 10)  # Padding to avoid edge cutoff
         )
-        self.recipes_label.bind(texture_size=lambda instance, value: setattr(instance, 'height', value[1]))
+        # Dynamically set height based on content
+        self.recipes_label.bind(texture_size=lambda instance, value: setattr(instance, 'height', value[1] + 20))
         recipes_scroll.add_widget(self.recipes_label)
         recipes_container.add_widget(recipes_header)
         recipes_container.add_widget(recipes_scroll)
@@ -166,7 +170,15 @@ class FruitDetectionApp(App):
         layout.add_widget(info_layout)
         layout.add_widget(self.btn)
 
+        # Bind window resize event to update text size
+        Window.bind(on_resize=self.update_text_size)
+
         return layout
+
+    def update_text_size(self, instance, width, height):
+        # Adjust text_size based on new window width
+        self.nutrition_label.text_size = (width - 60, None)
+        self.recipes_label.text_size = (width - 60, None)
 
     def toggle_camera(self, instance):
         if not self.camera.play:
